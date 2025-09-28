@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Viewer – Multi-Day Bus Booking & Feedback</title>
+<style>
+body { font-family: Arial, sans-serif; text-align: center; background: #f8f8f8; }
+h1,h2,h3 { margin-bottom: 10px; }
+.bus-container { display: flex; justify-content: center; gap: 50px; margin-top: 20px; flex-wrap: wrap; }
+.bus { display:flex; flex-direction:column; align-items:center; gap:10px; background:#fff; padding:20px; border-radius:10px; width:350px; box-shadow:0 2px 6px rgba(0,0,0,0.2);}
+.row { display:flex; justify-content:center; gap:40px; }
+.side { display:flex; gap:10px; }
+.seat { width:40px;height:40px; border-radius:8px; display:flex; justify-content:center; align-items:center; font-size:14px; font-weight:bold; color:white; }
+.available { background: green; }
+.booked { background: red; }
+.driver { width:60px;height:60px; background:gray;color:white; display:flex; justify-content:center; align-items:center; border-radius:10px; margin-bottom:20px; }
+.last-row { display:flex; gap:10px; justify-content:center; }
+.date-select { margin-bottom: 15px; }
+
+.chat-box { background:#f1f1f1; padding:10px; border-radius:8px; width:90%; margin:10px auto; text-align:left; max-height:150px; overflow-y:auto; }
+.chat-input { width:70%; padding:5px; }
+.chat-send { padding:5px 10px; }
+.chat-item { display:flex; justify-content: space-between; align-items:center; margin-bottom:5px; padding:2px 5px; background:#e0e0e0; border-radius:4px; }
+.chat-buttons button { margin-left:5px; }
+</style>
+</head>
+<body>
+<h1>Bus Seat Booking – Viewer</h1>
+
+<div class="bus-container">
+  <div class="bus">
+    <h3>Bus (Morning)</h3>
+    <div class="date-select">
+      <label for="dateBus1">Choose Date:</label>
+      <select id="dateBus1"></select>
+    </div>
+    <div class="driver">Driver</div>
+    <div id="busRows1"></div>
+    <div class="last-row" id="lastRow1"></div>
+  </div>
+  <div class="bus">
+    <h3>Bus (Evening)</h3>
+    <div class="date-select">
+      <label for="dateBus2">Choose Date:</label>
+      <select id="dateBus2"></select>
+    </div>
+    <div class="driver">Driver</div>
+    <div id="busRows2"></div>
+    <div class="last-row" id="lastRow2"></div>
+  </div>
+</div>
+
+<h3>Admin Notes (Read only)</h3>
+<div class="chat-box" id="adminNoteBox"></div>
+
+<h3>Feedback</h3>
+<div class="chat-box" id="feedbackBox"></div>
+<input type="text" id="feedbackInput" class="chat-input" placeholder="Write feedback...">
+<button id="feedbackSend" class="chat-send">Send</button>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+import { getDatabase, ref, push, onValue, update } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC6DgXWURDYBLcSfh_TFFAAhhgTdsoiNiQ",
+  authDomain: "bus-boking-b5320.firebaseapp.com",
+  databaseURL: "https://bus-boking-b5320-default-rtdb.asia-southeast1.firebasedatabase.app/",
+  projectId: "bus-boking-b5320",
+  storageBucket: "bus-boking-b5320.appspot.com",
+  messagingSenderId: "268882398957",
+  appId: "1:268882398957:web:f4aefe58ed23737392c6e4",
+  measurementId: "G-E05TT3W9E8"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const adminNoteRef = ref(db,"adminNote");
+const feedbackRef = ref(db,"feedback");
+
+// Generate viewer ID
+let viewerID = localStorage.getItem("viewerID");
+if(!viewerID){
+  viewerID = "viewer_"+Math.random().toString(36).substr(2,9);
+  localStorage.setItem("viewerID",viewerID);
+}
+
+// ----------------- DATE SELECTORS -----------------
+function formatDate(date){
+  const y = date.getFullYear();
+  const m = String(date.getMonth()+1).padStart(2,"0");
+  const d = String(date.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+
+function fillDateDropdown(selectId){
+  const select = document.getElementById(selectId);
+  const today = new Date();
+  for(let offset=-7; offset<=7; offset++){
+    const d=new Date(today); d.setDate(today.getDate()+offset);
+    const opt=document.createElement("option");
+    opt.value=formatDate(d);
+    opt.textContent=`${d.getDate()}-${d.getMonth()+1}-${d.getFullYear()}`;
+    if(offset===0) opt.selected=true;
+    select.appendChild(opt);
+  }
+}
+fillDateDropdown("dateBus1");
+fillDateDropdown("dateBus2");
+
+// ----------------- BUS CREATION -----------------
+function createBus(busRowsId,lastRowId,busKey,dateSelectId){
+  const busRows=document.getElementById(busRowsId);
+  const lastRow=document.getElementById(lastRowId);
+  const dateSelect=document.getElementById(dateSelectId);
+  let seatNumber=1;
+  const seatElements=[];
+
+  function createSeat(num){
+    const seat=document.createElement("div");
+    seat.classList.add("seat","available");
+    seat.innerText=num;
+    seatElements.push(seat);
+    return seat;
+  }
+
+  for(let r=0;r<9;r++){
+    const row=document.createElement("div"); row.classList.add("row");
+    const left=document.createElement("div"); left.classList.add("side");
+    for(let i=0;i<2;i++) left.appendChild(createSeat(seatNumber++));
+    const right=document.createElement("div"); right.classList.add("side");
+    for(let i=0;i<3;i++) right.appendChild(createSeat(seatNumber++));
+    row.appendChild(left); row.appendChild(right); busRows.appendChild(row);
+  }
+  for(let i=0;i<6;i++) lastRow.appendChild(createSeat(seatNumber++));
+
+  function syncSeats(){
+    const dateKey = dateSelect.value;
+    onValue(ref(db,`seats/${dateKey}/${busKey}`), snapshot=>{
+      const data=snapshot.val()||{};
+      seatElements.forEach(seat=>{
+        const num = seat.innerText;
+        const state = data[num]||"available";
+        seat.classList.remove("available","booked");
+        seat.classList.add(state);
+      });
+    });
+  }
+
+  syncSeats();
+  dateSelect.addEventListener("change",syncSeats);
+}
+
+createBus("busRows1","lastRow1","bus1","dateBus1");
+createBus("busRows2","lastRow2","bus2","dateBus2");
+
+// ----------------- ADMIN NOTES -----------------
+const adminNoteBox = document.getElementById("adminNoteBox");
+onValue(adminNoteRef, snapshot=>{
+  const notes = snapshot.val()||{};
+  adminNoteBox.innerHTML="";
+  for(const key in notes){
+    const div=document.createElement("div");
+    div.classList.add("chat-item"); div.textContent=notes[key];
+    adminNoteBox.appendChild(div);
+  }
+});
+
+// ----------------- FEEDBACK -----------------
+const feedbackInput = document.getElementById("feedbackInput");
+const feedbackSend = document.getElementById("feedbackSend");
+const feedbackBox = document.getElementById("feedbackBox");
+
+feedbackSend.onclick = ()=>{
+  const text = feedbackInput.value.trim();
+  if(!text) return;
+  push(feedbackRef,{text:text,user:viewerID});
+  feedbackInput.value="";
+};
+
+onValue(feedbackRef, snapshot=>{
+  const items = snapshot.val()||{};
+  feedbackBox.innerHTML="";
+  for(const key in items){
+    const item = items[key];
+    const div=document.createElement("div");
+    div.classList.add("chat-item");
+    div.textContent=item.text;
+
+    if(item.user===viewerID){ // only own messages can be edited
+      const btnDiv=document.createElement("div"); btnDiv.classList.add("chat-buttons");
+      const editBtn=document.createElement("button");
+      editBtn.textContent="Edit";
+      editBtn.onclick=()=>{
+        const newText = prompt("Edit your feedback:",item.text);
+        if(newText) update(ref(db,"feedback/"+key+"/text"), newText);
+      };
+      btnDiv.appendChild(editBtn);
+      div.appendChild(btnDiv);
+    }
+
+    feedbackBox.appendChild(div);
+  }
+});
+</script>
+</body>
+</html>
